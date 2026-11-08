@@ -55,11 +55,12 @@ func refresh() -> void:
 	modulate = Color(0.62, 0.62, 0.62) if used_attack and not selected else Color.WHITE
 
 
-func move_to(target: Vector2) -> void:
+func move_to(target: Vector2) -> Tween:
 	if _move_tween != null and _move_tween.is_valid():
 		_move_tween.kill()
 	_move_tween = create_tween()
 	_move_tween.tween_property(self, "position", target, 0.22).set_trans(Tween.TRANS_QUAD).set_ease(Tween.EASE_OUT)
+	return _move_tween
 
 
 func lunge_toward(target_pos: Vector2) -> void:

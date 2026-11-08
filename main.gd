@@ -38,6 +38,7 @@ const NEXUS_HEALTH := 20
 const OPENING_HAND := 4
 
 signal choice_made(ability_id: String)
+signal blocker_chosen(blocker: Variant)
 
 var player_deck: Array[CardInstance] = []
 var enemy_deck: Array[CardInstance] = []
@@ -48,6 +49,9 @@ var enemy_board: Array[CardInstance] = []
 var player_hand_views: Array[CardView] = []
 var player_views: Array[CardView] = []
 var enemy_views: Array[CardView] = []
+var blockers_used: Array[CardInstance] = []
+var pending_enemy_attacker: CardInstance = null
+var awaiting_block_choice: bool = false
 
 var player_gold: int = STARTING_GOLD
 var enemy_gold: int = STARTING_GOLD
@@ -55,6 +59,8 @@ var player_nexus: int = NEXUS_HEALTH
 var enemy_nexus: int = NEXUS_HEALTH
 var round_number: int = 1
 var deaths_this_round: int = 0
+var player_has_attack_token: bool = true
+var combat_preview: String = ""
 
 var player_turn: bool = true
 var busy: bool = false
@@ -68,14 +74,20 @@ var _in_acid: bool = false
 var _log_lines: Array[String] = []
 
 var board_root: Control
+var board_table: BoardTable
 var start_layer: Control
 var action_row: HBoxContainer
 var choice_layer: Control
 var choice_box: VBoxContainer
 var enemy_nexus_button: Button
 var end_button: Button
+var attack_token_panel: PanelContainer
+var attack_token_label: Label
+var oracle_button: Button
+var deck_panel: PanelContainer
+var deck_label: Label
 var player_nexus_label: Label
-var gold_label: Label
+var gold_bar: GoldBar
 var info_label: Label
 var status_label: Label
 
@@ -159,6 +171,11 @@ func _build_ui() -> void:
 	board_root.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	root.add_child(board_root)
 
+	board_table = BoardTable.new()
+	board_table.set_anchors_preset(Control.PRESET_FULL_RECT)
+	board_table.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	board_root.add_child(board_table)
+
 	var hud := Control.new()
 	hud.set_anchors_preset(Control.PRESET_FULL_RECT)
 	hud.mouse_filter = Control.MOUSE_FILTER_IGNORE
@@ -166,7 +183,9 @@ func _build_ui() -> void:
 
 	info_label = _make_hud_label(hud, 18)
 	player_nexus_label = _make_hud_label(hud, 22)
-	gold_label = _make_hud_label(hud, 22)
+	gold_bar = GoldBar.new()
+	gold_bar.custom_minimum_size = Vector2(260, 74)
+	hud.add_child(gold_bar)
 	status_label = _make_hud_label(hud, 18)
 	status_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
 	status_label.vertical_alignment = VERTICAL_ALIGNMENT_BOTTOM
@@ -179,6 +198,37 @@ func _build_ui() -> void:
 	end_button.text = "End Turn"
 	end_button.pressed.connect(_on_end_turn)
 	hud.add_child(end_button)
+
+	attack_token_panel = PanelContainer.new()
+	hud.add_child(attack_token_panel)
+	var token_style := StyleBoxFlat.new()
+	token_style.bg_color = Color("10191f", 0.96)
+	token_style.border_color = Color("a88b4e")
+	token_style.set_border_width_all(1)
+	token_style.set_corner_radius_all(10)
+	attack_token_panel.add_theme_stylebox_override("panel", token_style)
+	attack_token_label = _make_hud_label(attack_token_panel, 16)
+	attack_token_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	attack_token_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	attack_token_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
+
+	oracle_button = Button.new()
+	oracle_button.text = "Oracle's Eye"
+	oracle_button.pressed.connect(_begin_preview)
+	hud.add_child(oracle_button)
+
+	deck_panel = PanelContainer.new()
+	hud.add_child(deck_panel)
+	var deck_style := StyleBoxFlat.new()
+	deck_style.bg_color = Color("152329", 0.96)
+	deck_style.border_color = Color("a88b4e")
+	deck_style.set_border_width_all(2)
+	deck_style.set_corner_radius_all(8)
+	deck_panel.add_theme_stylebox_override("panel", deck_style)
+	deck_label = _make_hud_label(deck_panel, 18)
+	deck_label.set_anchors_preset(Control.PRESET_FULL_RECT)
+	deck_label.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	deck_label.vertical_alignment = VERTICAL_ALIGNMENT_CENTER
 
 	action_row = HBoxContainer.new()
 	action_row.add_theme_constant_override("separation", 8)
@@ -285,6 +335,10 @@ func _create_view(card: CardInstance, player_owned: bool, zone_name: String) -> 
 
 
 func _on_card_pressed(view: CardView) -> void:
+	if mode == "block":
+		if awaiting_block_choice and view.zone == "board" and view.owner_player:
+			_choose_blocker(view)
+		return
 	if game_over or busy or awaiting_choice or not player_turn:
 		return
 	if view.zone == "hand" and view.owner_player:
@@ -357,6 +411,9 @@ func _emit_choice(ability_id: String) -> void:
 
 func _on_player_unit_pressed(view: CardView) -> void:
 	var unit := view.instance
+	if mode == "block":
+		_choose_blocker(view)
+		return
 	if mode == "switch" and selected != null and unit != selected.instance:
 		_switch_units(selected.instance, unit)
 		return
@@ -368,16 +425,23 @@ func _on_player_unit_pressed(view: CardView) -> void:
 		return
 	selected = view
 	mode = ""
+	combat_preview = ""
 	_log("Selected %s." % unit.current_definition().card_name)
 	_refresh_all()
 
 
 func _on_enemy_unit_pressed(view: CardView) -> void:
+	if mode == "preview" and selected != null and not busy and player_turn:
+		combat_preview = _get_combat_preview(selected.instance, view.instance)
+		mode = ""
+		_refresh_all()
+		return
 	if mode != "attack" or selected == null:
 		return
 	var attacker := selected.instance
 	busy = true
 	mode = ""
+	_refresh_board_table()
 	await _resolve_combat(attacker, view.instance, true)
 	_clear_dead_selection()
 	busy = false
@@ -386,11 +450,17 @@ func _on_enemy_unit_pressed(view: CardView) -> void:
 
 
 func _on_enemy_nexus_pressed() -> void:
+	if mode == "preview" and selected != null and not busy and player_turn:
+		combat_preview = _get_combat_preview(selected.instance, null)
+		mode = ""
+		_refresh_all()
+		return
 	if mode != "attack" or selected == null or busy or game_over or not player_turn:
 		return
 	var attacker := selected.instance
 	busy = true
 	mode = ""
+	_refresh_board_table()
 	await _resolve_combat(attacker, null, true)
 	_clear_dead_selection()
 	busy = false
@@ -399,11 +469,115 @@ func _on_enemy_nexus_pressed() -> void:
 
 
 func _begin_attack() -> void:
-	if selected == null or selected.instance.attacks_left <= 0:
+	if selected == null or selected.instance.attacks_left <= 0 or not player_has_attack_token:
+		_log("You do not have the Attack Token this round.")
 		return
 	mode = "attack"
+	combat_preview = ""
+	_refresh_board_table()
 	_log("Click an enemy unit, or the enemy nexus.")
 	_refresh_hud()
+	var attack_position := Vector2(
+		selected.position.x,
+		board_table.combat_center_y() - CardView.CARD_SIZE.y * 0.5
+	)
+	var move_tween: Tween = selected.move_to(attack_position)
+	await move_tween.finished
+
+
+func _begin_preview() -> void:
+	if selected == null or busy or not player_turn:
+		return
+	mode = "preview"
+	combat_preview = ""
+	_refresh_board_table()
+	_log("Oracle's Eye: click an enemy unit or nexus to preview combat.")
+
+
+func _get_combat_preview(attacker: CardInstance, defender: CardInstance) -> String:
+	var attack_copy := _copy_for_preview(attacker)
+	var defense_copy: CardInstance = null
+	if defender != null:
+		defense_copy = _copy_for_preview(defender)
+
+	for ally in player_board:
+		if ally.health > 0 and ally.chosen_ability_id == "ally_attack_heal":
+			attack_copy.gain_health(2)
+
+	var strikes := 2 if (
+		attack_copy.has_active_keyword("high_attack_speed")
+		or attack_copy.has_active_keyword("swift_attack")
+	) else 1
+	if defense_copy == null:
+		var damage_to_nexus := attack_copy.current_damage() * strikes
+		var stolen_gold := _preview_stolen_gold(damage_to_nexus, attacker.has_active_keyword("steal_gold"))
+		return "%s: %d strike(s), %d Nexus damage. %d gold stolen." % [
+			attack_copy.current_definition().card_name,
+			strikes,
+			damage_to_nexus,
+			stolen_gold,
+		]
+
+	var damage_to_defender := 0
+	var damage_to_attacker := 0
+	for _strike in strikes:
+		if attack_copy.health <= 0 or defense_copy.health <= 0:
+			break
+		damage_to_defender += _preview_damage(defense_copy, attack_copy.current_damage(), attack_copy)
+		if defense_copy.health > 0 and attack_copy.health > 0:
+			damage_to_attacker += _preview_damage(attack_copy, defense_copy.current_damage(), defense_copy)
+
+	var stolen_gold := _preview_stolen_gold(
+		damage_to_defender,
+		attacker.has_active_keyword("steal_gold")
+	)
+	return "%s takes %d (%d HP); %s takes %d (%d HP); %d gold stolen." % [
+		attack_copy.current_definition().card_name,
+		damage_to_attacker,
+		maxi(attack_copy.health, 0),
+		defense_copy.current_definition().card_name,
+		damage_to_defender,
+		maxi(defense_copy.health, 0),
+		stolen_gold,
+	]
+
+
+func _preview_stolen_gold(damage: int, can_steal: bool) -> int:
+	if not can_steal:
+		return 0
+	return mini(damage, mini(enemy_gold, GOLD_CAP - player_gold))
+
+
+func _copy_for_preview(source: CardInstance) -> CardInstance:
+	var copy := CardInstance.new(source.definition)
+	copy.damage = source.damage
+	copy.health = source.health
+	copy.max_health = source.max_health
+	copy.fury_bonus = source.fury_bonus
+	copy.revives_remaining = source.revives_remaining
+	copy.current_form_id = source.current_form_id
+	copy.chosen_ability_id = source.chosen_ability_id
+	copy.silenced = source.silenced
+	return copy
+
+
+func _preview_damage(target: CardInstance, raw_amount: int, striker: CardInstance) -> int:
+	if target.health <= 0 or raw_amount <= 0:
+		return 0
+	var dealt := raw_amount
+	if target.has_active_keyword("tough"):
+		dealt = maxi(raw_amount - 1, 0)
+	target.health -= dealt
+	if dealt > 0 and target.health > 0 and target.has_active_keyword("fury"):
+		target.apply_fury()
+	if dealt > 0 and target.has_active_keyword("acidic_blood") and striker != null:
+		_preview_damage(striker, 2, null)
+	if target.health <= 0 and target.revives_remaining > 0 and not target.silenced:
+		target.revives_remaining = 0
+		target.health = target.definition.health
+		target.max_health = target.definition.health
+		target.fury_bonus = 0
+	return dealt
 
 
 func _begin_switch() -> void:
@@ -505,13 +679,45 @@ func _enemy_turn() -> void:
 		await _enemy_play(card)
 	_enemy_prepare()
 	_refresh_units()
+	if player_has_attack_token:
+		_log("The enemy does not have the Attack Token.")
+		return
+	blockers_used.clear()
 	var attackers: Array[CardInstance] = []
 	for unit in enemy_board:
 		attackers.append(unit)
 	for unit in attackers:
 		if game_over or unit.health <= 0 or unit.attacks_left <= 0 or not enemy_board.has(unit):
 			continue
-		await _resolve_combat(unit, _enemy_target(unit), false)
+		pending_enemy_attacker = unit
+		mode = "block"
+		_log("%s is attacking. Choose a blocker or let it through." % unit.current_definition().card_name)
+		_refresh_all()
+		var attacker_view := _view_for(unit)
+		if attacker_view != null:
+			var attacker_position := Vector2(
+				_width() * 0.5 - CardView.CARD_SIZE.x * 0.5,
+				board_table.combat_center_y() - CardView.CARD_SIZE.y * 0.5
+			)
+			var move_tween: Tween = attacker_view.move_to(attacker_position)
+			await move_tween.finished
+		awaiting_block_choice = true
+		_refresh_actions()
+		var chosen_blocker: Variant = await blocker_chosen
+		awaiting_block_choice = false
+		mode = ""
+		pending_enemy_attacker = null
+		var blocker: CardInstance = chosen_blocker as CardInstance
+		if blocker != null:
+			var blocker_view := _view_for(blocker)
+			if blocker_view != null:
+				var blocker_position := Vector2(
+					_width() * 0.5 + 12.0,
+					board_table.combat_center_y() - CardView.CARD_SIZE.y * 0.5
+				)
+				var blocker_tween: Tween = blocker_view.move_to(blocker_position)
+				await blocker_tween.finished
+		await _resolve_combat(unit, blocker, false)
 		if game_over:
 			return
 		await get_tree().create_timer(0.2).timeout
@@ -566,19 +772,22 @@ func _enemy_prepare() -> void:
 			_drain(unit, victim, enemy_board)
 
 
-func _enemy_target(attacker: CardInstance) -> CardInstance:
-	for unit in player_board:
-		if unit.health <= 0:
-			continue
-		var to_unit := attacker.current_damage()
-		if unit.has_active_keyword("tough"):
-			to_unit = maxi(to_unit - 1, 0)
-		var to_attacker := unit.current_damage()
-		if attacker.has_active_keyword("tough"):
-			to_attacker = maxi(to_attacker - 1, 0)
-		if to_unit >= unit.health and to_attacker < attacker.health:
-			return unit
-	return null
+func _choose_blocker(view: CardView) -> void:
+	if not awaiting_block_choice:
+		return
+	var blocker := view.instance
+	if blocker.health <= 0 or not player_board.has(blocker):
+		return
+	if blockers_used.has(blocker):
+		_log("%s has already blocked this round." % blocker.current_definition().card_name)
+		return
+	blockers_used.append(blocker)
+	blocker_chosen.emit(blocker)
+
+
+func _decline_block() -> void:
+	if awaiting_block_choice:
+		blocker_chosen.emit(null)
 
 
 func _resolve_round_end() -> void:
@@ -612,6 +821,7 @@ func _mages_attack(player_side: bool, bodies: int) -> int:
 
 func _start_round() -> void:
 	round_number += 1
+	player_has_attack_token = not player_has_attack_token
 	player_gold = mini(GOLD_CAP, player_gold + GOLD_PER_ROUND)
 	enemy_gold = mini(GOLD_CAP, enemy_gold + GOLD_PER_ROUND)
 	draw_card(true)
@@ -623,7 +833,11 @@ func _start_round() -> void:
 	player_turn = true
 	mode = ""
 	selected = null
-	_log("Round %d. Both sides gain %d gold." % [round_number, GOLD_PER_ROUND])
+	_log("Round %d. %s has the Attack Token. Both sides gain %d gold." % [
+		round_number,
+		"You" if player_has_attack_token else "Enemy",
+		GOLD_PER_ROUND,
+	])
 
 
 func _ready_unit(unit: CardInstance) -> void:
@@ -640,12 +854,31 @@ func _resolve_combat(attacker: CardInstance, defender: CardInstance, attacker_is
 	attacker.attacks_left = 0
 	_grant_attack_health(attacker, attacker_is_player)
 	var strikes := 2 if attacker.has_active_keyword("high_attack_speed") or attacker.has_active_keyword("swift_attack") else 1
+	var attacker_view := _view_for(attacker)
+	if attacker_view != null:
+		var combat_x := _width() * 0.5 - CardView.CARD_SIZE.x * 0.5
+		if defender != null:
+			combat_x -= CardView.CARD_SIZE.x * 0.5 + 6.0
+		var combat_position := Vector2(
+			combat_x,
+			board_table.combat_center_y() - CardView.CARD_SIZE.y * 0.5
+		)
+		var move_tween: Tween = attacker_view.move_to(combat_position)
+		await move_tween.finished
+	if defender != null:
+		var defender_view := _view_for(defender)
+		if defender_view != null:
+			var defender_position := Vector2(
+				_width() * 0.5 + 6.0,
+				board_table.combat_center_y() - CardView.CARD_SIZE.y * 0.5
+			)
+			var defender_tween: Tween = defender_view.move_to(defender_position)
+			await defender_tween.finished
 	for _strike in strikes:
 		if attacker.health <= 0:
 			break
 		if defender != null and defender.health <= 0:
 			break
-		var attacker_view := _view_for(attacker)
 		if attacker_view != null:
 			var aim := enemy_nexus_button.position if defender == null else Vector2.ZERO
 			if defender != null:
@@ -825,13 +1058,22 @@ func _refresh_all() -> void:
 func _refresh_hud() -> void:
 	enemy_nexus_button.text = "Enemy nexus  %d" % enemy_nexus
 	player_nexus_label.text = "Your nexus  %d" % player_nexus
-	gold_label.text = "Gold  %d" % player_gold
-	info_label.text = "Round %d     Enemy: %s     Gold %d     Hand %d" % [
+	gold_bar.configure(player_gold, GOLD_CAP)
+	info_label.text = "Round %d     Enemy: %s     Gold %d     Hand %d     Deck %d" % [
 		round_number,
 		_faction_name(enemy_faction),
 		enemy_gold,
 		enemy_hand.size(),
+		enemy_deck.size(),
 	]
+	deck_label.text = "DECK\n%d" % player_deck.size()
+	attack_token_label.text = "ATTACK TOKEN\n%s" % (
+		"YOURS" if player_has_attack_token else "ENEMY"
+	)
+	attack_token_label.add_theme_color_override("font_color", (
+		Color("f0d48a") if player_has_attack_token else Color("c58b84")
+	))
+	oracle_button.disabled = selected == null or busy or not player_turn
 	end_button.disabled = busy or awaiting_choice or game_over or not player_turn
 	var aiming := mode == "attack" and selected != null
 	enemy_nexus_button.modulate = Color("ffd0c4") if aiming else Color.WHITE
@@ -847,17 +1089,21 @@ func _refresh_units() -> void:
 			var affordable := player_gold >= view.instance.definition.gold_cost and player_board.size() < MAX_BOARD
 			if not affordable:
 				view.modulate = Color(0.45, 0.45, 0.45)
-
+		elif mode == "block" and view.owner_player and blockers_used.has(view.instance):
+			view.modulate = Color(0.45, 0.45, 0.45)
 
 func _refresh_actions() -> void:
 	_clear_box(action_row)
 	action_row.position = Vector2(24, _player_row_y() + CardView.CARD_SIZE.y + 8)
+	if mode == "block" and pending_enemy_attacker != null and awaiting_block_choice:
+		_add_action("Let It Through", _decline_block)
+		return
 	if selected == null or not player_turn or busy or game_over:
 		return
 	var unit := selected.instance
 	if unit.health <= 0:
 		return
-	if unit.attacks_left > 0:
+	if unit.attacks_left > 0 and player_has_attack_token:
 		_add_action("Attack", _begin_attack)
 	if unit.definition.has_keyword("shapeshift") and not unit.ability_used:
 		_add_action("Bear", _cast_shapeshift.bind("elf_form_bear"))
@@ -880,9 +1126,10 @@ func _add_action(title: String, callback: Callable) -> void:
 
 
 func _layout() -> void:
-	_place(enemy_views, 78.0)
+	_place(enemy_views, 92.0)
 	_place(player_views, _player_row_y())
 	_place(player_hand_views, _hand_y())
+	_refresh_board_table()
 	var width := _width()
 	enemy_nexus_button.position = Vector2(width * 0.5 - 180.0, 12.0)
 	enemy_nexus_button.size = Vector2(360, 44)
@@ -891,13 +1138,30 @@ func _layout() -> void:
 	info_label.position = Vector2(24, 14)
 	info_label.size = Vector2(520, 30)
 	player_nexus_label.position = Vector2(24, 48)
-	player_nexus_label.size = Vector2(240, 32)
-	gold_label.position = Vector2(280, 48)
-	gold_label.size = Vector2(180, 32)
-	status_label.position = Vector2(width * 0.5 - 340.0, 280.0)
-	status_label.size = Vector2(680, 110)
+	player_nexus_label.size = Vector2(240, 40)
+	gold_bar.position = Vector2(width - 286.0, 68.0)
+	gold_bar.size = Vector2(260.0, 74.0)
+	attack_token_panel.position = Vector2(width - 220.0, 158.0)
+	attack_token_panel.size = Vector2(180.0, 50.0)
+	oracle_button.position = Vector2(34.0, board_table.combat_center_y() - 24.0)
+	oracle_button.size = Vector2(132.0, 48.0)
+	deck_panel.position = Vector2(36.0, _hand_y() + 26.0)
+	deck_panel.size = Vector2(96.0, 132.0)
+	status_label.position = Vector2(36.0, 274.0)
+	status_label.size = Vector2(300, 120)
 	if action_row != null:
 		action_row.position = Vector2(24, _player_row_y() + CardView.CARD_SIZE.y + 8)
+
+
+func _refresh_board_table() -> void:
+	board_table.configure(
+		_player_row_y(),
+		enemy_views.size(),
+		player_views.size(),
+		mode,
+		_faction_name(enemy_faction),
+		combat_preview
+	)
 
 
 func _place(views: Array[CardView], row_y: float) -> void:
