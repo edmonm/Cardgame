@@ -53,6 +53,7 @@ var combat_attackers: Array[CardInstance] = []
 var combat_blockers: Dictionary = {}
 var blockers_used: Array[CardInstance] = []
 var selected_combat_attacker: CardInstance = null
+var selected_combat_blocker: CardInstance = null
 
 var player_gold: int = STARTING_GOLD
 var enemy_gold: int = STARTING_GOLD
@@ -341,7 +342,21 @@ func _on_card_pressed(view: CardView) -> void:
 	if mode == "declare_attack":
 		return
 	if mode == "block" and player_turn == false:
-		if view.zone == "board" and not view.owner_player:
+		if view.zone != "board":
+			return
+		if view.owner_player:
+			if (
+				player_board.has(view.instance)
+				and view.instance.health > 0
+				and view.instance.attacks_left > 0
+				and not blockers_used.has(view.instance)
+			):
+				selected_combat_blocker = view.instance
+				_log("Selected %s to block. Click an attacker." % view.instance.current_definition().card_name)
+				_refresh_all()
+		elif selected_combat_blocker != null:
+			_assign_blocker(selected_combat_blocker, view.instance)
+		else:
 			_select_attacker_to_block(view)
 		return
 	if game_over or busy or awaiting_choice or not player_turn:
@@ -468,8 +483,11 @@ func _begin_attack() -> void:
 
 func _on_card_drag_dropped(view: CardView, drop_position: Vector2) -> void:
 	if mode == "block" and not player_turn and view.owner_player and view.zone == "board":
-		if selected_combat_attacker != null and board_table.is_combat_drop(drop_position):
-			_assign_blocker(view)
+		var target := _attacker_at_position(drop_position)
+		if target != null:
+			_assign_blocker(view.instance, target)
+		elif selected_combat_attacker != null and board_table.is_combat_drop(drop_position):
+			_assign_blocker(view.instance, selected_combat_attacker)
 		elif selected_combat_attacker != null:
 			_remove_blocker(view.instance)
 		else:
@@ -747,6 +765,7 @@ func _resolve_attack_group(
 	combat_blockers.clear()
 	blockers_used.clear()
 	selected_combat_attacker = null
+	selected_combat_blocker = null
 	_layout()
 
 
@@ -837,10 +856,11 @@ func _enemy_turn() -> void:
 	combat_blockers.clear()
 	blockers_used.clear()
 	selected_combat_attacker = null
+	selected_combat_blocker = null
 	for index in attackers.size():
 		_place_attacking_view(attackers[index], false, index)
 	mode = "block"
-	_log("Enemy attack declared. Select an attacker, then a blocker for it.")
+	_log("Drag a blocker onto an attacker, or click your blocker and then an attacker.")
 	_refresh_all()
 	await blocks_confirmed
 	mode = ""
@@ -908,27 +928,39 @@ func _select_attacker_to_block(view: CardView) -> void:
 	_refresh_all()
 
 
-func _assign_blocker(view: CardView) -> void:
-	if selected_combat_attacker == null:
-		_log("Select an attacking unit first.")
+func _attacker_at_position(global_position: Vector2) -> CardInstance:
+	for attacker in combat_attackers:
+		var view := _view_for(attacker)
+		if view != null and view.get_global_rect().has_point(global_position):
+			return attacker
+	return null
+
+
+func _assign_blocker(blocker: CardInstance, attacker: CardInstance) -> void:
+	if attacker == null:
 		return
-	var blocker := view.instance
 	if blocker.health <= 0 or not player_board.has(blocker) or blocker.attacks_left <= 0:
 		return
-	if not combat_attackers.has(selected_combat_attacker):
+	if not combat_attackers.has(attacker):
 		return
 	if blockers_used.has(blocker):
 		_log("%s is already blocking another attacker." % blocker.current_definition().card_name)
 		return
-	if combat_blockers.has(selected_combat_attacker):
-		var previous: CardInstance = combat_blockers[selected_combat_attacker]
+	if combat_blockers.has(attacker):
+		var previous: CardInstance = combat_blockers[attacker]
 		blockers_used.erase(previous)
 		var previous_view := _view_for(previous)
 		if previous_view != null:
 			previous_view.move_to(_bench_position(previous, true))
 	blockers_used.append(blocker)
-	combat_blockers[selected_combat_attacker] = blocker
-	var attacker_index := combat_attackers.find(selected_combat_attacker)
+	combat_blockers[attacker] = blocker
+	selected_combat_attacker = attacker
+	selected_combat_blocker = null
+	_log("%s is blocking %s." % [
+		blocker.current_definition().card_name,
+		attacker.current_definition().card_name,
+	])
+	var attacker_index := combat_attackers.find(attacker)
 	_place_blocking_view(blocker, attacker_index)
 	_refresh_all()
 
@@ -942,6 +974,8 @@ func _remove_blocker(blocker: CardInstance) -> void:
 	if assigned_attacker != null:
 		combat_blockers.erase(assigned_attacker)
 		blockers_used.erase(blocker)
+		if selected_combat_blocker == blocker:
+			selected_combat_blocker = null
 	_layout()
 	_refresh_all()
 
@@ -1249,7 +1283,11 @@ func _refresh_units() -> void:
 	for view in _every_view():
 		if not is_instance_valid(view):
 			continue
-		view.selected = view == selected or view.instance == selected_combat_attacker
+		view.selected = (
+			view == selected
+			or view.instance == selected_combat_attacker
+			or view.instance == selected_combat_blocker
+		)
 		view.refresh()
 		if view.zone == "hand":
 			var affordable := player_gold >= view.instance.definition.gold_cost and player_board.size() < MAX_BOARD
