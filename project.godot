@@ -8,16 +8,16 @@
 
 config_version=5
 
-[autoload]
-
-CardDatabase="*res://card_database.gd"
-
 [application]
 
 config/name="Cardgame"
 run/main_scene="uid://bdkjjgc85l1f6"
 config/features=PackedStringArray("4.7", "Mobile")
 config/icon="res://icon.svg"
+
+[autoload]
+
+CardDatabase="*res://card_database.gd"
 
 [display]
 

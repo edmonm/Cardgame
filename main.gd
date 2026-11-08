@@ -22,6 +22,13 @@ const DECK_IDS: Array[String] = [
 	"undead_butcher",
 ]
 
+const FACTIONS: Array[CardResource.Faction] = [
+	CardResource.Faction.HUMAN,
+	CardResource.Faction.ORC,
+	CardResource.Faction.ELF,
+	CardResource.Faction.UNDEAD,
+]
+
 const MAX_BOARD := 6
 const MAX_HAND := 10
 const STARTING_GOLD := 3
@@ -53,12 +60,15 @@ var player_turn: bool = true
 var busy: bool = false
 var awaiting_choice: bool = false
 var game_over: bool = false
+var selected_faction: CardResource.Faction = CardResource.Faction.HUMAN
+var enemy_faction: CardResource.Faction = CardResource.Faction.ORC
 var mode: String = ""
 var selected: CardView = null
 var _in_acid: bool = false
 var _log_lines: Array[String] = []
 
 var board_root: Control
+var start_layer: Control
 var action_row: HBoxContainer
 var choice_layer: Control
 var choice_box: VBoxContainer
@@ -72,29 +82,40 @@ var status_label: Label
 
 func _ready() -> void:
 	_build_ui()
-	player_deck = _make_deck()
-	enemy_deck = _make_deck()
+	_show_class_select()
+
+
+func _start_game(faction: CardResource.Faction) -> void:
+	selected_faction = faction
+	var possible_enemy_factions := FACTIONS.duplicate()
+	possible_enemy_factions.erase(faction)
+	enemy_faction = possible_enemy_factions.pick_random()
+	player_deck = _make_deck(selected_faction)
+	enemy_deck = _make_deck(enemy_faction)
 	for _i in OPENING_HAND:
-		_draw(true)
-		_draw(false)
+		draw_card(true)
+		draw_card(false)
 	_log("Click a card to play it. Select your unit, then Attack.")
 	_log("Round 1. You have %d gold." % player_gold)
+	start_layer.queue_free()
 	_refresh_all()
 
 
-func _make_deck() -> Array[CardInstance]:
+func _make_deck(faction: CardResource.Faction) -> Array[CardInstance]:
 	var deck: Array[CardInstance] = []
 	for card_id in DECK_IDS:
 		var card := CardDatabase.create_instance(card_id)
 		if card == null:
 			push_error("Missing card: %s" % card_id)
 			continue
+		if card.definition.faction != faction:
+			continue
 		deck.append(card)
 	deck.shuffle()
 	return deck
 
 
-func _draw(player_side: bool) -> void:
+func draw_card(player_side: bool) -> void:
 	var deck: Array[CardInstance] = player_deck if player_side else enemy_deck
 	var hand: Array[CardInstance] = player_hand if player_side else enemy_hand
 	if deck.is_empty():
@@ -179,6 +200,72 @@ func _build_ui() -> void:
 	choice_box.position = Vector2(520, 340)
 	choice_box.add_theme_constant_override("separation", 10)
 	choice_layer.add_child(choice_box)
+
+
+func _show_class_select() -> void:
+	start_layer = Control.new()
+	start_layer.set_anchors_preset(Control.PRESET_FULL_RECT)
+	start_layer.mouse_filter = Control.MOUSE_FILTER_STOP
+	start_layer.z_index = 20
+	board_root.get_parent().add_child(start_layer)
+
+	var dim := ColorRect.new()
+	dim.set_anchors_preset(Control.PRESET_FULL_RECT)
+	dim.color = Color(0, 0, 0, 0.72)
+	dim.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	start_layer.add_child(dim)
+
+	var center := CenterContainer.new()
+	center.set_anchors_preset(Control.PRESET_FULL_RECT)
+	center.mouse_filter = Control.MOUSE_FILTER_STOP
+	start_layer.add_child(center)
+
+	var panel := PanelContainer.new()
+	panel.custom_minimum_size = Vector2(520, 0)
+	var panel_style := StyleBoxFlat.new()
+	panel_style.bg_color = Color("171a22")
+	panel_style.border_color = Color("c4a15a")
+	panel_style.set_border_width_all(2)
+	panel_style.set_corner_radius_all(10)
+	panel_style.set_content_margin_all(28)
+	panel.add_theme_stylebox_override("panel", panel_style)
+	center.add_child(panel)
+
+	var options := VBoxContainer.new()
+	options.add_theme_constant_override("separation", 12)
+	panel.add_child(options)
+
+	var title := _make_hud_label(options, 30)
+	title.text = "Choose Your Class"
+	title.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+	var description := _make_hud_label(options, 16)
+	description.text = "Your deck will contain cards from your chosen class only."
+	description.horizontal_alignment = HORIZONTAL_ALIGNMENT_CENTER
+
+	_add_faction_button(options, "Human", CardResource.Faction.HUMAN)
+	_add_faction_button(options, "Orc", CardResource.Faction.ORC)
+	_add_faction_button(options, "Elf", CardResource.Faction.ELF)
+	_add_faction_button(options, "Undead", CardResource.Faction.UNDEAD)
+
+
+func _add_faction_button(parent: VBoxContainer, title: String, faction: CardResource.Faction) -> void:
+	var button := Button.new()
+	button.text = title
+	button.custom_minimum_size = Vector2(0, 48)
+	button.pressed.connect(_start_game.bind(faction))
+	parent.add_child(button)
+
+
+func _faction_name(faction: CardResource.Faction) -> String:
+	match faction:
+		CardResource.Faction.ORC:
+			return "Orc"
+		CardResource.Faction.ELF:
+			return "Elf"
+		CardResource.Faction.UNDEAD:
+			return "Undead"
+		_:
+			return "Human"
 
 
 func _make_hud_label(parent: Node, font_size: int) -> Label:
@@ -527,8 +614,8 @@ func _start_round() -> void:
 	round_number += 1
 	player_gold = mini(GOLD_CAP, player_gold + GOLD_PER_ROUND)
 	enemy_gold = mini(GOLD_CAP, enemy_gold + GOLD_PER_ROUND)
-	_draw(true)
-	_draw(false)
+	draw_card(true)
+	draw_card(false)
 	for unit in player_board:
 		_ready_unit(unit)
 	for unit in enemy_board:
@@ -739,7 +826,12 @@ func _refresh_hud() -> void:
 	enemy_nexus_button.text = "Enemy nexus  %d" % enemy_nexus
 	player_nexus_label.text = "Your nexus  %d" % player_nexus
 	gold_label.text = "Gold  %d" % player_gold
-	info_label.text = "Round %d     Enemy gold %d     Enemy hand %d" % [round_number, enemy_gold, enemy_hand.size()]
+	info_label.text = "Round %d     Enemy: %s     Gold %d     Hand %d" % [
+		round_number,
+		_faction_name(enemy_faction),
+		enemy_gold,
+		enemy_hand.size(),
+	]
 	end_button.disabled = busy or awaiting_choice or game_over or not player_turn
 	var aiming := mode == "attack" and selected != null
 	enemy_nexus_button.modulate = Color("ffd0c4") if aiming else Color.WHITE
