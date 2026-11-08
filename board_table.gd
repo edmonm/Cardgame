@@ -34,6 +34,11 @@ func combat_center_y() -> float:
 	return (ENEMY_ROW_Y + CARD_SIZE.y + player_row_y) * 0.5
 
 
+func is_combat_drop(global_position: Vector2) -> bool:
+	var local_position := get_global_transform_with_canvas().affine_inverse() * global_position
+	return absf(local_position.y - combat_center_y()) <= 72.0
+
+
 func _draw() -> void:
 	if size.x < 1.0 or size.y < 1.0:
 		return
@@ -126,10 +131,10 @@ func _draw_combat_lane(turf: Rect2) -> void:
 
 	var title := "COMBAT ZONE"
 	match combat_mode:
-		"attack":
-			title = "CHOOSE A DEFENDER"
+		"declare_attack":
+			title = "DECLARE ATTACKERS"
 		"block":
-			title = "SELECT A BLOCKER"
+			title = "ASSIGN BLOCKERS"
 		"preview":
 			title = "ORACLE'S EYE"
 	var font := ThemeDB.fallback_font

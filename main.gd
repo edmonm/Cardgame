@@ -38,7 +38,7 @@ const NEXUS_HEALTH := 20
 const OPENING_HAND := 4
 
 signal choice_made(ability_id: String)
-signal blocker_chosen(blocker: Variant)
+signal blocks_confirmed
 
 var player_deck: Array[CardInstance] = []
 var enemy_deck: Array[CardInstance] = []
@@ -49,9 +49,10 @@ var enemy_board: Array[CardInstance] = []
 var player_hand_views: Array[CardView] = []
 var player_views: Array[CardView] = []
 var enemy_views: Array[CardView] = []
+var combat_attackers: Array[CardInstance] = []
+var combat_blockers: Dictionary = {}
 var blockers_used: Array[CardInstance] = []
-var pending_enemy_attacker: CardInstance = null
-var awaiting_block_choice: bool = false
+var selected_combat_attacker: CardInstance = null
 
 var player_gold: int = STARTING_GOLD
 var enemy_gold: int = STARTING_GOLD
@@ -60,6 +61,7 @@ var enemy_nexus: int = NEXUS_HEALTH
 var round_number: int = 1
 var deaths_this_round: int = 0
 var player_has_attack_token: bool = true
+var player_attack_declared: bool = false
 var combat_preview: String = ""
 
 var player_turn: bool = true
@@ -107,7 +109,7 @@ func _start_game(faction: CardResource.Faction) -> void:
 	for _i in OPENING_HAND:
 		draw_card(true)
 		draw_card(false)
-	_log("Click a card to play it. Select your unit, then Attack.")
+	_log("Play units from your hand. Drag attackers into combat when you have the Attack Token.")
 	_log("Round 1. You have %d gold." % player_gold)
 	start_layer.queue_free()
 	_refresh_all()
@@ -331,13 +333,16 @@ func _create_view(card: CardInstance, player_owned: bool, zone_name: String) -> 
 	var view := CardView.new()
 	view.setup(card, player_owned, zone_name)
 	view.pressed.connect(_on_card_pressed)
+	view.drag_dropped.connect(_on_card_drag_dropped)
 	return view
 
 
 func _on_card_pressed(view: CardView) -> void:
-	if mode == "block":
-		if awaiting_block_choice and view.zone == "board" and view.owner_player:
-			_choose_blocker(view)
+	if mode == "declare_attack":
+		return
+	if mode == "block" and player_turn == false:
+		if view.zone == "board" and not view.owner_player:
+			_select_attacker_to_block(view)
 		return
 	if game_over or busy or awaiting_choice or not player_turn:
 		return
@@ -411,9 +416,6 @@ func _emit_choice(ability_id: String) -> void:
 
 func _on_player_unit_pressed(view: CardView) -> void:
 	var unit := view.instance
-	if mode == "block":
-		_choose_blocker(view)
-		return
 	if mode == "switch" and selected != null and unit != selected.instance:
 		_switch_units(selected.instance, unit)
 		return
@@ -436,17 +438,6 @@ func _on_enemy_unit_pressed(view: CardView) -> void:
 		mode = ""
 		_refresh_all()
 		return
-	if mode != "attack" or selected == null:
-		return
-	var attacker := selected.instance
-	busy = true
-	mode = ""
-	_refresh_board_table()
-	await _resolve_combat(attacker, view.instance, true)
-	_clear_dead_selection()
-	busy = false
-	if not game_over:
-		_refresh_all()
 
 
 func _on_enemy_nexus_pressed() -> void:
@@ -455,34 +446,83 @@ func _on_enemy_nexus_pressed() -> void:
 		mode = ""
 		_refresh_all()
 		return
-	if mode != "attack" or selected == null or busy or game_over or not player_turn:
+
+
+func _begin_attack() -> void:
+	if not player_has_attack_token:
+		_log("You do not have the Attack Token this round.")
 		return
-	var attacker := selected.instance
+	if player_attack_declared:
+		_log("You have already declared your attack this round.")
+		return
+	if _eligible_attackers(player_board).is_empty():
+		_log("You have no ready units to attack with.")
+		return
+	mode = "declare_attack"
+	combat_attackers.clear()
+	combat_blockers.clear()
+	combat_preview = ""
+	_log("Drag ready units from your bench to the combat zone, then confirm.")
+	_refresh_all()
+
+
+func _on_card_drag_dropped(view: CardView, drop_position: Vector2) -> void:
+	if mode == "block" and not player_turn and view.owner_player and view.zone == "board":
+		if selected_combat_attacker != null and board_table.is_combat_drop(drop_position):
+			_assign_blocker(view)
+		elif selected_combat_attacker != null:
+			_remove_blocker(view.instance)
+		else:
+			_layout()
+		return
+	if mode != "declare_attack" or not view.owner_player or view.zone != "board":
+		_layout()
+		return
+	if not board_table.is_combat_drop(drop_position):
+		if combat_attackers.has(view.instance):
+			combat_attackers.erase(view.instance)
+			_refresh_all()
+			return
+		_layout()
+		return
+	if not player_board.has(view.instance) or view.instance.attacks_left <= 0:
+		_layout()
+		return
+	if combat_attackers.has(view.instance):
+		combat_attackers.erase(view.instance)
+		_layout()
+		return
+	combat_attackers.append(view.instance)
+	_place_attacking_view(view.instance, true, combat_attackers.size() - 1)
+	_refresh_all()
+
+
+func _confirm_attack() -> void:
+	if mode != "declare_attack" or combat_attackers.is_empty() or busy:
+		return
 	busy = true
+	player_attack_declared = true
 	mode = ""
-	_refresh_board_table()
-	await _resolve_combat(attacker, null, true)
-	_clear_dead_selection()
+	var attackers := combat_attackers.duplicate()
+	var blockers := _choose_ai_blockers(attackers, enemy_board)
+	combat_blockers = blockers
+	_log("Attack declared with %d unit(s)." % attackers.size())
+	_refresh_all()
+	await _resolve_attack_group(attackers, blockers, true)
 	busy = false
+	combat_attackers.clear()
+	combat_blockers.clear()
+	_clear_dead_selection()
 	if not game_over:
 		_refresh_all()
 
 
-func _begin_attack() -> void:
-	if selected == null or selected.instance.attacks_left <= 0 or not player_has_attack_token:
-		_log("You do not have the Attack Token this round.")
-		return
-	mode = "attack"
-	combat_preview = ""
-	_refresh_board_table()
-	_log("Click an enemy unit, or the enemy nexus.")
-	_refresh_hud()
-	var attack_position := Vector2(
-		selected.position.x,
-		board_table.combat_center_y() - CardView.CARD_SIZE.y * 0.5
-	)
-	var move_tween: Tween = selected.move_to(attack_position)
-	await move_tween.finished
+func _cancel_attack() -> void:
+	combat_attackers.clear()
+	combat_blockers.clear()
+	mode = ""
+	_log("Attack cancelled.")
+	_refresh_all()
 
 
 func _begin_preview() -> void:
@@ -523,9 +563,10 @@ func _get_combat_preview(attacker: CardInstance, defender: CardInstance) -> Stri
 	for _strike in strikes:
 		if attack_copy.health <= 0 or defense_copy.health <= 0:
 			break
-		damage_to_defender += _preview_damage(defense_copy, attack_copy.current_damage(), attack_copy)
-		if defense_copy.health > 0 and attack_copy.health > 0:
-			damage_to_attacker += _preview_damage(attack_copy, defense_copy.current_damage(), defense_copy)
+		var attack_damage := attack_copy.current_damage()
+		var counter_damage := defense_copy.current_damage()
+		damage_to_defender += _preview_damage(defense_copy, attack_damage, attack_copy)
+		damage_to_attacker += _preview_damage(attack_copy, counter_damage, defense_copy)
 
 	var stolen_gold := _preview_stolen_gold(
 		damage_to_defender,
@@ -652,6 +693,112 @@ func _full_heal(healer: CardInstance, target: CardInstance) -> void:
 	_refresh_all()
 
 
+func _eligible_attackers(board: Array[CardInstance]) -> Array[CardInstance]:
+	var attackers: Array[CardInstance] = []
+	for unit in board:
+		if unit.health > 0 and unit.attacks_left > 0:
+			attackers.append(unit)
+	return attackers
+
+
+func _choose_ai_blockers(
+	attackers: Array[CardInstance],
+	defenders: Array[CardInstance]
+) -> Dictionary:
+	var assignments: Dictionary = {}
+	var used: Array[CardInstance] = []
+	for attacker in attackers:
+		var best_defender: CardInstance = null
+		var best_score := 0
+		for defender in defenders:
+			if defender.health <= 0 or used.has(defender):
+				continue
+			var damage_to_attacker := defender.current_damage()
+			if attacker.has_active_keyword("tough"):
+				damage_to_attacker = maxi(damage_to_attacker - 1, 0)
+			var damage_to_defender := attacker.current_damage()
+			if defender.has_active_keyword("tough"):
+				damage_to_defender = maxi(damage_to_defender - 1, 0)
+			var score := 0
+			if damage_to_attacker >= attacker.health:
+				score += 3
+			if damage_to_defender >= defender.health:
+				score -= 3
+			if score > best_score:
+				best_score = score
+				best_defender = defender
+		if best_defender != null:
+			assignments[attacker] = best_defender
+			used.append(best_defender)
+	return assignments
+
+
+func _resolve_attack_group(
+	attackers: Array[CardInstance],
+	blockers: Dictionary,
+	attacker_is_player: bool
+) -> void:
+	for attacker in attackers:
+		if game_over:
+			break
+		var defender: CardInstance = blockers.get(attacker) as CardInstance
+		await _resolve_combat(attacker, defender, attacker_is_player)
+	combat_attackers.clear()
+	combat_blockers.clear()
+	blockers_used.clear()
+	selected_combat_attacker = null
+	_layout()
+
+
+func _bench_position(unit: CardInstance, player_owned: bool) -> Vector2:
+	var board: Array[CardInstance] = player_board if player_owned else enemy_board
+	var index := board.find(unit)
+	var count := board.size()
+	var card_width := CardView.CARD_SIZE.x
+	var gap := 14.0
+	if count > 6:
+		gap = -minf(40.0, float(count - 6) * 16.0)
+	var step := card_width + gap
+	var total := card_width + step * float(count - 1)
+	var start_x := (_width() - total) * 0.5
+	var row_y := _player_row_y() if player_owned else 92.0
+	return Vector2(start_x + step * float(index), row_y)
+
+
+func _place_attacking_view(unit: CardInstance, player_owned: bool, index: int) -> void:
+	var view := _view_for(unit)
+	if view == null:
+		return
+	var count := combat_attackers.size()
+	var spacing := CardView.CARD_SIZE.x + 14.0
+	var total := CardView.CARD_SIZE.x + spacing * float(count - 1)
+	var start_x := (_width() - total) * 0.5
+	var x := start_x + spacing * float(index)
+	if player_owned:
+		view.move_to(Vector2(x, board_table.combat_center_y() - CardView.CARD_SIZE.y * 0.5))
+	else:
+		view.move_to(Vector2(x, board_table.combat_center_y() - CardView.CARD_SIZE.y - 12.0))
+
+
+func _place_blocking_view(unit: CardInstance, attacker_index: int) -> void:
+	var view := _view_for(unit)
+	if view == null or combat_attackers.is_empty():
+		return
+	var spacing := CardView.CARD_SIZE.x + 14.0
+	var total := CardView.CARD_SIZE.x + spacing * float(combat_attackers.size() - 1)
+	var start_x := (_width() - total) * 0.5
+	view.move_to(Vector2(
+		start_x + spacing * float(attacker_index),
+		board_table.combat_center_y() + 8.0
+	))
+
+
+func _is_in_combat(unit: CardInstance) -> bool:
+	if combat_attackers.has(unit) or combat_blockers.values().has(unit):
+		return true
+	return false
+
+
 func _on_end_turn() -> void:
 	if busy or awaiting_choice or game_over or not player_turn:
 		return
@@ -682,45 +829,27 @@ func _enemy_turn() -> void:
 	if player_has_attack_token:
 		_log("The enemy does not have the Attack Token.")
 		return
+	var attackers := _eligible_attackers(enemy_board)
+	if attackers.is_empty():
+		_log("The enemy has no ready attackers.")
+		return
+	combat_attackers = attackers
+	combat_blockers.clear()
 	blockers_used.clear()
-	var attackers: Array[CardInstance] = []
-	for unit in enemy_board:
-		attackers.append(unit)
-	for unit in attackers:
-		if game_over or unit.health <= 0 or unit.attacks_left <= 0 or not enemy_board.has(unit):
-			continue
-		pending_enemy_attacker = unit
-		mode = "block"
-		_log("%s is attacking. Choose a blocker or let it through." % unit.current_definition().card_name)
+	selected_combat_attacker = null
+	for index in attackers.size():
+		_place_attacking_view(attackers[index], false, index)
+	mode = "block"
+	_log("Enemy attack declared. Select an attacker, then a blocker for it.")
+	_refresh_all()
+	await blocks_confirmed
+	mode = ""
+	await _resolve_attack_group(attackers, combat_blockers, false)
+	combat_attackers.clear()
+	combat_blockers.clear()
+	selected_combat_attacker = null
+	if not game_over:
 		_refresh_all()
-		var attacker_view := _view_for(unit)
-		if attacker_view != null:
-			var attacker_position := Vector2(
-				_width() * 0.5 - CardView.CARD_SIZE.x * 0.5,
-				board_table.combat_center_y() - CardView.CARD_SIZE.y * 0.5
-			)
-			var move_tween: Tween = attacker_view.move_to(attacker_position)
-			await move_tween.finished
-		awaiting_block_choice = true
-		_refresh_actions()
-		var chosen_blocker: Variant = await blocker_chosen
-		awaiting_block_choice = false
-		mode = ""
-		pending_enemy_attacker = null
-		var blocker: CardInstance = chosen_blocker as CardInstance
-		if blocker != null:
-			var blocker_view := _view_for(blocker)
-			if blocker_view != null:
-				var blocker_position := Vector2(
-					_width() * 0.5 + 12.0,
-					board_table.combat_center_y() - CardView.CARD_SIZE.y * 0.5
-				)
-				var blocker_tween: Tween = blocker_view.move_to(blocker_position)
-				await blocker_tween.finished
-		await _resolve_combat(unit, blocker, false)
-		if game_over:
-			return
-		await get_tree().create_timer(0.2).timeout
 
 
 func _best_enemy_play() -> CardInstance:
@@ -772,22 +901,54 @@ func _enemy_prepare() -> void:
 			_drain(unit, victim, enemy_board)
 
 
-func _choose_blocker(view: CardView) -> void:
-	if not awaiting_block_choice:
+func _select_attacker_to_block(view: CardView) -> void:
+	if not combat_attackers.has(view.instance):
+		return
+	selected_combat_attacker = view.instance
+	_refresh_all()
+
+
+func _assign_blocker(view: CardView) -> void:
+	if selected_combat_attacker == null:
+		_log("Select an attacking unit first.")
 		return
 	var blocker := view.instance
-	if blocker.health <= 0 or not player_board.has(blocker):
+	if blocker.health <= 0 or not player_board.has(blocker) or blocker.attacks_left <= 0:
+		return
+	if not combat_attackers.has(selected_combat_attacker):
 		return
 	if blockers_used.has(blocker):
-		_log("%s has already blocked this round." % blocker.current_definition().card_name)
+		_log("%s is already blocking another attacker." % blocker.current_definition().card_name)
 		return
+	if combat_blockers.has(selected_combat_attacker):
+		var previous: CardInstance = combat_blockers[selected_combat_attacker]
+		blockers_used.erase(previous)
+		var previous_view := _view_for(previous)
+		if previous_view != null:
+			previous_view.move_to(_bench_position(previous, true))
 	blockers_used.append(blocker)
-	blocker_chosen.emit(blocker)
+	combat_blockers[selected_combat_attacker] = blocker
+	var attacker_index := combat_attackers.find(selected_combat_attacker)
+	_place_blocking_view(blocker, attacker_index)
+	_refresh_all()
 
 
-func _decline_block() -> void:
-	if awaiting_block_choice:
-		blocker_chosen.emit(null)
+func _remove_blocker(blocker: CardInstance) -> void:
+	var assigned_attacker: CardInstance = null
+	for attacker in combat_blockers:
+		if combat_blockers[attacker] == blocker:
+			assigned_attacker = attacker
+			break
+	if assigned_attacker != null:
+		combat_blockers.erase(assigned_attacker)
+		blockers_used.erase(blocker)
+	_layout()
+	_refresh_all()
+
+
+func _confirm_blocks() -> void:
+	if mode == "block":
+		blocks_confirmed.emit()
 
 
 func _resolve_round_end() -> void:
@@ -822,6 +983,7 @@ func _mages_attack(player_side: bool, bodies: int) -> int:
 func _start_round() -> void:
 	round_number += 1
 	player_has_attack_token = not player_has_attack_token
+	player_attack_declared = false
 	player_gold = mini(GOLD_CAP, player_gold + GOLD_PER_ROUND)
 	enemy_gold = mini(GOLD_CAP, enemy_gold + GOLD_PER_ROUND)
 	draw_card(true)
@@ -900,12 +1062,16 @@ func _resolve_combat(attacker: CardInstance, defender: CardInstance, attacker_is
 			if attacker.has_active_keyword("steal_gold"):
 				_steal_gold(hit, attacker_is_player)
 		else:
-			var dealt := _apply_damage(defender, attacker.current_damage(), attacker)
+			var attacker_was_alive := attacker.health > 0
+			var defender_was_alive := defender.health > 0
+			var attacker_strike_damage := attacker.current_damage()
+			var defender_strike_damage := defender.current_damage()
+			var dealt := _apply_damage(defender, attacker_strike_damage, attacker)
 			_popup_on_unit(defender, "-%d" % dealt, Color("ffb4a8"))
 			if attacker.has_active_keyword("steal_gold"):
 				_steal_gold(dealt, attacker_is_player)
-			if defender.health > 0 and attacker.health > 0:
-				var counter := _apply_damage(attacker, defender.current_damage(), defender)
+			if attacker_was_alive and defender_was_alive:
+				var counter := _apply_damage(attacker, defender_strike_damage, defender)
 				_popup_on_unit(attacker, "-%d" % counter, Color("ffb4a8"))
 		_refresh_units()
 		_refresh_hud()
@@ -1075,7 +1241,7 @@ func _refresh_hud() -> void:
 	))
 	oracle_button.disabled = selected == null or busy or not player_turn
 	end_button.disabled = busy or awaiting_choice or game_over or not player_turn
-	var aiming := mode == "attack" and selected != null
+	var aiming := mode == "declare_attack" and not combat_attackers.is_empty()
 	enemy_nexus_button.modulate = Color("ffd0c4") if aiming else Color.WHITE
 
 
@@ -1083,7 +1249,7 @@ func _refresh_units() -> void:
 	for view in _every_view():
 		if not is_instance_valid(view):
 			continue
-		view.selected = view == selected
+		view.selected = view == selected or view.instance == selected_combat_attacker
 		view.refresh()
 		if view.zone == "hand":
 			var affordable := player_gold >= view.instance.definition.gold_cost and player_board.size() < MAX_BOARD
@@ -1095,15 +1261,23 @@ func _refresh_units() -> void:
 func _refresh_actions() -> void:
 	_clear_box(action_row)
 	action_row.position = Vector2(24, _player_row_y() + CardView.CARD_SIZE.y + 8)
-	if mode == "block" and pending_enemy_attacker != null and awaiting_block_choice:
-		_add_action("Let It Through", _decline_block)
+	if mode == "declare_attack":
+		_add_action("Confirm Attack", _confirm_attack)
+		_add_action("Cancel", _cancel_attack)
+		return
+	if mode == "block" and not player_turn:
+		_add_action("Resolve Combat", _confirm_blocks)
 		return
 	if selected == null or not player_turn or busy or game_over:
 		return
 	var unit := selected.instance
 	if unit.health <= 0:
 		return
-	if unit.attacks_left > 0 and player_has_attack_token:
+	if (
+		not _eligible_attackers(player_board).is_empty()
+		and player_has_attack_token
+		and not player_attack_declared
+	):
 		_add_action("Attack", _begin_attack)
 	if unit.definition.has_keyword("shapeshift") and not unit.ability_used:
 		_add_action("Bear", _cast_shapeshift.bind("elf_form_bear"))
@@ -1126,8 +1300,8 @@ func _add_action(title: String, callback: Callable) -> void:
 
 
 func _layout() -> void:
-	_place(enemy_views, 92.0)
-	_place(player_views, _player_row_y())
+	_place_bench_views(enemy_views, 92.0)
+	_place_bench_views(player_views, _player_row_y())
 	_place(player_hand_views, _hand_y())
 	_refresh_board_table()
 	var width := _width()
@@ -1178,7 +1352,13 @@ func _place(views: Array[CardView], row_y: float) -> void:
 	for i in count:
 		if not is_instance_valid(views[i]):
 			continue
+		if _is_in_combat(views[i].instance):
+			continue
 		views[i].move_to(Vector2(start_x + step * float(i), row_y))
+
+
+func _place_bench_views(views: Array[CardView], row_y: float) -> void:
+	_place(views, row_y)
 
 
 func _popup_on_unit(unit: CardInstance, text: String, color: Color) -> void:

@@ -2,6 +2,7 @@ class_name CardView
 extends Panel
 
 signal pressed(view: CardView)
+signal drag_dropped(view: CardView, drop_position: Vector2)
 
 const CARD_SIZE := Vector2(124, 176)
 
@@ -17,6 +18,10 @@ var _rules_label: Label
 var _power_label: Label
 var _health_label: Label
 var _move_tween: Tween
+var _left_pressed: bool = false
+var _dragging: bool = false
+var _press_position: Vector2 = Vector2.ZERO
+var _drag_offset: Vector2 = Vector2.ZERO
 
 
 func _ready() -> void:
@@ -83,8 +88,34 @@ func _gui_input(event: InputEvent) -> void:
 	if mouse == null:
 		return
 	if mouse.pressed and mouse.button_index == MOUSE_BUTTON_LEFT:
+		_left_pressed = true
+		_dragging = false
+		_press_position = mouse.global_position
+		_drag_offset = mouse.global_position - global_position
 		pressed.emit(self)
 		accept_event()
+
+
+func _input(event: InputEvent) -> void:
+	if not _left_pressed:
+		return
+	var motion := event as InputEventMouseMotion
+	if motion != null and Input.is_mouse_button_pressed(MOUSE_BUTTON_LEFT):
+		if not _dragging and motion.global_position.distance_to(_press_position) >= 12.0:
+			_dragging = true
+			z_index = 30
+			if _move_tween != null and _move_tween.is_valid():
+				_move_tween.kill()
+		if _dragging:
+			global_position = motion.global_position - _drag_offset
+		return
+	var mouse := event as InputEventMouseButton
+	if mouse != null and mouse.button_index == MOUSE_BUTTON_LEFT and not mouse.pressed:
+		_left_pressed = false
+		if _dragging:
+			z_index = 1
+			drag_dropped.emit(self, mouse.global_position)
+		_dragging = false
 
 
 func _build() -> void:
