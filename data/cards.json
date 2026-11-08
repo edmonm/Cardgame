@@ -1,0 +1,400 @@
+[
+  {
+    "_id": "human_warrior",
+    "name": "Warrior",
+    "faction": "human",
+    "type": "unit",
+    "damage": 1,
+    "health": 5,
+    "gold_cost": 2,
+    "keywords": ["tough"],
+    "abilities": [
+      {
+        "id": "tough",
+        "trigger": "passive",
+        "text": "Tough: reduce damage taken by 1.",
+        "params": { "damage_reduction": 1 },
+        "choice_group": ""
+      }
+    ],
+    "forms": [],
+    "ability_choice_required": false,
+    "text": "Tough: reduce damage taken by 1."
+  },
+  {
+    "_id": "human_anti_mage",
+    "name": "Anti Mage",
+    "faction": "human",
+    "type": "unit",
+    "damage": 3,
+    "health": 6,
+    "gold_cost": 4,
+    "keywords": ["silence"],
+    "abilities": [
+      {
+        "id": "silence_spell",
+        "trigger": "activated",
+        "text": "Silence an enemy spell.",
+        "params": { "target": "enemy_spell" },
+        "choice_group": ""
+      }
+    ],
+    "forms": [],
+    "ability_choice_required": false,
+    "text": "Silence an enemy spell."
+  },
+  {
+    "_id": "human_ranger",
+    "name": "Ranger",
+    "faction": "human",
+    "type": "unit",
+    "damage": 4,
+    "health": 1,
+    "gold_cost": 3,
+    "keywords": ["high_attack_speed"],
+    "abilities": [
+      {
+        "id": "high_attack_speed",
+        "trigger": "passive",
+        "text": "High attack speed: strikes twice.",
+        "params": { "strikes": 2 },
+        "choice_group": ""
+      }
+    ],
+    "forms": [],
+    "ability_choice_required": false,
+    "text": "High attack speed: strikes twice."
+  },
+  {
+    "_id": "human_healer",
+    "name": "Healer",
+    "faction": "human",
+    "type": "unit",
+    "damage": 0,
+    "health": 4,
+    "gold_cost": 3,
+    "keywords": [],
+    "abilities": [
+      {
+        "id": "ally_attack_heal",
+        "trigger": "on_ally_attack",
+        "text": "When allies attack, grant +2 Health.",
+        "params": { "health_gain": 2 },
+        "choice_group": "healer"
+      },
+      {
+        "id": "full_heal_one",
+        "trigger": "activated",
+        "text": "Fully heal 1 ally.",
+        "params": { "targets": 1, "heal": "full" },
+        "choice_group": "healer"
+      }
+    ],
+    "forms": [],
+    "ability_choice_required": true,
+    "text": "Choose one: when allies attack, grant +2 Health. Or fully heal 1 ally."
+  },
+  {
+    "_id": "orc_warrior",
+    "name": "Orc Warrior",
+    "faction": "orc",
+    "type": "unit",
+    "damage": 2,
+    "health": 7,
+    "gold_cost": 4,
+    "keywords": ["fury"],
+    "abilities": [
+      {
+        "id": "fury",
+        "trigger": "on_take_damage",
+        "text": "When this takes damage, gain Fury: +3 damage.",
+        "params": { "damage_gain": 3 },
+        "choice_group": ""
+      }
+    ],
+    "forms": [],
+    "ability_choice_required": false,
+    "text": "When this takes damage, gain Fury: +3 damage."
+  },
+  {
+    "_id": "orc_shaman",
+    "name": "Shaman",
+    "faction": "orc",
+    "type": "unit",
+    "damage": 3,
+    "health": 5,
+    "gold_cost": 4,
+    "keywords": ["soul_collector"],
+    "abilities": [
+      {
+        "id": "soul_collector",
+        "trigger": "activated",
+        "text": "Drain 1 damage and 1 health from an ally. Other allies gain +1/+1.",
+        "params": { "effect": "drain_ally_to_buff_others", "damage": 1, "health": 1 },
+        "choice_group": ""
+      }
+    ],
+    "forms": [],
+    "ability_choice_required": false,
+    "text": "Drain 1 damage and 1 health from an ally. Other allies gain +1/+1."
+  },
+  {
+    "_id": "orc_goblin",
+    "name": "Goblin",
+    "faction": "orc",
+    "type": "unit",
+    "damage": 2,
+    "health": 1,
+    "gold_cost": 1,
+    "keywords": ["steal_gold"],
+    "abilities": [
+      {
+        "id": "steal_gold",
+        "trigger": "on_deal_damage",
+        "text": "Steal gold equal to the damage dealt.",
+        "params": { "gold": "damage_dealt" },
+        "choice_group": ""
+      }
+    ],
+    "forms": [],
+    "ability_choice_required": false,
+    "text": "Steal gold equal to the damage dealt."
+  },
+  {
+    "_id": "elf_warrior",
+    "name": "Elf Warrior",
+    "faction": "elf",
+    "type": "unit",
+    "damage": 5,
+    "health": 3,
+    "gold_cost": 5,
+    "keywords": ["high_attack_speed"],
+    "abilities": [
+      {
+        "id": "high_attack_speed",
+        "trigger": "passive",
+        "text": "High attack speed: strikes twice.",
+        "params": { "strikes": 2 },
+        "choice_group": ""
+      }
+    ],
+    "forms": [],
+    "ability_choice_required": false,
+    "text": "High attack speed: strikes twice."
+  },
+  {
+    "_id": "elf_ranger",
+    "name": "Elf Ranger",
+    "faction": "elf",
+    "type": "unit",
+    "damage": 5,
+    "health": 2,
+    "gold_cost": 4,
+    "keywords": ["switch_position"],
+    "abilities": [
+      {
+        "id": "switch_position",
+        "trigger": "activated",
+        "text": "Switch positions with an ally.",
+        "params": { "target": "ally" },
+        "choice_group": ""
+      }
+    ],
+    "forms": [],
+    "ability_choice_required": false,
+    "text": "Switch positions with an ally."
+  },
+  {
+    "_id": "elf_mount",
+    "name": "Elf Mount",
+    "faction": "elf",
+    "type": "unit",
+    "damage": 3,
+    "health": 7,
+    "gold_cost": 4,
+    "keywords": ["last_breath"],
+    "abilities": [
+      {
+        "id": "dismount",
+        "trigger": "last_breath",
+        "text": "Last Breath: summon a 2/2 Dismounted Elf.",
+        "params": { "effect": "dismount_rider", "spawn": "elf_rider" },
+        "choice_group": ""
+      }
+    ],
+    "forms": [],
+    "ability_choice_required": false,
+    "text": "Last Breath: summon a 2/2 Dismounted Elf."
+  },
+  {
+    "_id": "elf_shapeshifter",
+    "name": "Shapeshifter Elf",
+    "faction": "elf",
+    "type": "unit",
+    "damage": 2,
+    "health": 2,
+    "gold_cost": 3,
+    "keywords": ["shapeshift"],
+    "abilities": [
+      {
+        "id": "shapeshift",
+        "trigger": "activated",
+        "text": "Shapeshift into a Bear, Wolf, or Raven.",
+        "params": { "forms": ["elf_form_bear", "elf_form_wolf", "elf_form_raven"] },
+        "choice_group": ""
+      }
+    ],
+    "forms": [
+      {
+        "_id": "elf_form_bear",
+        "name": "Bear",
+        "faction": "elf",
+        "type": "form",
+        "damage": 4,
+        "health": 5,
+        "gold_cost": 0,
+        "keywords": [],
+        "abilities": [],
+        "forms": [],
+        "ability_choice_required": false,
+        "text": "Bear form."
+      },
+      {
+        "_id": "elf_form_wolf",
+        "name": "Wolf",
+        "faction": "elf",
+        "type": "form",
+        "damage": 6,
+        "health": 3,
+        "gold_cost": 0,
+        "keywords": [],
+        "abilities": [],
+        "forms": [],
+        "ability_choice_required": false,
+        "text": "Wolf form."
+      },
+      {
+        "_id": "elf_form_raven",
+        "name": "Raven",
+        "faction": "elf",
+        "type": "form",
+        "damage": 3,
+        "health": 2,
+        "gold_cost": 0,
+        "keywords": ["swift_attack"],
+        "abilities": [
+          {
+            "id": "swift_attack",
+            "trigger": "passive",
+            "text": "Swift attack: strikes twice.",
+            "params": {},
+            "choice_group": ""
+          }
+        ],
+        "forms": [],
+        "ability_choice_required": false,
+        "text": "Swift attack: strikes twice."
+      }
+    ],
+    "ability_choice_required": false,
+    "text": "Shapeshift into a Bear, Wolf, or Raven. Raven strikes twice."
+  },
+  {
+    "_id": "undead_skeleton",
+    "name": "Skeleton",
+    "faction": "undead",
+    "type": "token",
+    "damage": 2,
+    "health": 1,
+    "gold_cost": 0,
+    "keywords": [],
+    "abilities": [],
+    "forms": [],
+    "ability_choice_required": false,
+    "text": "Spawned token."
+  },
+  {
+    "_id": "undead_warrior",
+    "name": "Undead Warrior",
+    "faction": "undead",
+    "type": "unit",
+    "damage": 3,
+    "health": 4,
+    "gold_cost": 3,
+    "keywords": ["revive"],
+    "abilities": [
+      {
+        "id": "revive",
+        "trigger": "last_breath",
+        "text": "Revive once after dying.",
+        "params": { "revives": 1 },
+        "choice_group": ""
+      }
+    ],
+    "forms": [],
+    "ability_choice_required": false,
+    "text": "Revive once after dying."
+  },
+  {
+    "_id": "undead_mage",
+    "name": "Undead Mage",
+    "faction": "undead",
+    "type": "unit",
+    "damage": 1,
+    "health": 5,
+    "gold_cost": 4,
+    "keywords": ["collect_dead"],
+    "abilities": [
+      {
+        "id": "raise_skeleton",
+        "trigger": "round_end",
+        "text": "Collect a dead body before the round ends. Spawn a Skeleton and it makes a free attack.",
+        "params": {
+          "collect": "dead_body",
+          "spawn": "undead_skeleton",
+          "free_attack": true
+        },
+        "choice_group": ""
+      }
+    ],
+    "forms": [],
+    "ability_choice_required": false,
+    "text": "Collect a dead body before the round ends. Spawn a Skeleton and it makes a free attack."
+  },
+  {
+    "_id": "undead_butcher",
+    "name": "Butcher",
+    "faction": "undead",
+    "type": "unit",
+    "damage": 2,
+    "health": 10,
+    "gold_cost": 5,
+    "keywords": ["acidic_blood"],
+    "abilities": [
+      {
+        "id": "acidic_blood",
+        "trigger": "on_take_damage",
+        "text": "When this takes damage, deal 2 damage to every enemy that struck it.",
+        "params": { "damage": 2, "targets": "enemy_attackers" },
+        "choice_group": ""
+      }
+    ],
+    "forms": [],
+    "ability_choice_required": false,
+    "text": "When this takes damage, deal 2 damage to every enemy that struck it."
+  },
+  {
+    "_id": "elf_rider",
+    "name": "Dismounted Elf",
+    "faction": "elf",
+    "type": "token",
+    "damage": 2,
+    "health": 2,
+    "gold_cost": 0,
+    "keywords": [],
+    "abilities": [],
+    "forms": [],
+    "ability_choice_required": false,
+    "text": "Summoned when an Elf Mount dies."
+  }
+]

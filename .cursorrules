@@ -1,0 +1,1 @@
+This is a Godot 4.x project using GDScript 2.0. Always use static typing, @export, @onready, and modern signal connection syntax (e.g., signal_name.connect(callable)).
