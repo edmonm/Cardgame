@@ -1,7 +1,7 @@
 class_name BoardTable
 extends Control
 
-const CARD_SIZE := Vector2(124, 176)
+const CARD_SIZE := Vector2(168, 240)
 const SIDE_MARGIN := 24.0
 const ENEMY_ROW_Y := 92.0
 

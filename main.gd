@@ -36,6 +36,7 @@ const GOLD_PER_ROUND := 2
 const GOLD_CAP := 10
 const NEXUS_HEALTH := 20
 const OPENING_HAND := 4
+const RANGER_EXECUTION_CINEMATIC = preload("res://human_ranger_execution_cinematic.gd")
 
 signal choice_made(ability_id: String)
 signal blocks_confirmed
@@ -54,6 +55,7 @@ var combat_blockers: Dictionary = {}
 var blockers_used: Array[CardInstance] = []
 var selected_combat_attacker: CardInstance = null
 var selected_combat_blocker: CardInstance = null
+var _recall_states: Dictionary = {}
 
 var player_gold: int = STARTING_GOLD
 var enemy_gold: int = STARTING_GOLD
@@ -377,6 +379,7 @@ func _play_from_hand(view: CardView) -> void:
 	if player_board.size() >= MAX_BOARD:
 		_log("Your board is full.")
 		return
+	var original_state := _capture_card_state(card)
 	busy = true
 	if card.definition.ability_choice_required and card.chosen_ability_id.is_empty():
 		awaiting_choice = true
@@ -397,6 +400,10 @@ func _play_from_hand(view: CardView) -> void:
 	card.attacks_left = 1
 	player_board.append(card)
 	player_views.append(view)
+	_recall_states[card] = {
+		"original": original_state,
+		"placed": _capture_card_state(card),
+	}
 	mode = ""
 	busy = false
 	_log("Played %s." % card.definition.card_name)
@@ -482,6 +489,9 @@ func _begin_attack() -> void:
 
 
 func _on_card_drag_dropped(view: CardView, drop_position: Vector2) -> void:
+	if view.owner_player and view.zone == "board" and _is_hand_drop(drop_position):
+		_recall_card(view)
+		return
 	if mode == "block" and not player_turn and view.owner_player and view.zone == "board":
 		var target := _attacker_at_position(drop_position)
 		if target != null:
@@ -511,8 +521,99 @@ func _on_card_drag_dropped(view: CardView, drop_position: Vector2) -> void:
 		_layout()
 		return
 	combat_attackers.append(view.instance)
-	_place_attacking_view(view.instance, true, combat_attackers.size() - 1)
+	_place_attacking_view(view.instance, combat_attackers.size() - 1)
 	_refresh_all()
+
+
+func _is_hand_drop(drop_position: Vector2) -> bool:
+	var hand_top := _height() - CardView.CARD_SIZE.y - 28.0
+	var viewport_rect := Rect2(Vector2.ZERO, Vector2(_width(), _height()))
+	return viewport_rect.has_point(drop_position) and drop_position.y >= hand_top
+
+
+func _recall_card(view: CardView) -> void:
+	if busy or awaiting_choice or game_over or not player_turn:
+		_layout()
+		return
+	if player_hand.size() >= MAX_HAND:
+		_log("Your hand is full; the unit cannot be recalled.")
+		_layout()
+		return
+	var card := view.instance
+	var recall_state: Dictionary = _recall_states.get(card, {})
+	var placed_state: Dictionary = recall_state.get("placed", {})
+	if recall_state.is_empty() or not _card_state_matches(card, placed_state):
+		_log("Only an unused unit played this turn can be recalled.")
+		_layout()
+		return
+
+	player_board.erase(card)
+	player_views.erase(view)
+	player_hand.append(card)
+	player_hand_views.append(view)
+	_restore_card_state(card, recall_state["original"])
+	_recall_states.erase(card)
+	view.zone = "hand"
+	view.scale = Vector2.ONE
+	view.z_index = 1
+	player_gold = mini(GOLD_CAP, player_gold + card.definition.gold_cost)
+	combat_attackers.erase(card)
+	if combat_attackers.is_empty() and mode == "declare_attack":
+		mode = ""
+	for index in combat_attackers.size():
+		_place_attacking_view(combat_attackers[index], index)
+	if selected == view:
+		selected = null
+	if selected_combat_attacker == card:
+		selected_combat_attacker = null
+	combat_preview = ""
+	if mode != "declare_attack" or combat_attackers.is_empty():
+		mode = ""
+	_log("Recalled %s. Its cost was refunded." % card.definition.card_name)
+	_refresh_all()
+
+
+func _capture_card_state(card: CardInstance) -> Dictionary:
+	return {
+		"damage": card.damage,
+		"health": card.health,
+		"max_health": card.max_health,
+		"fury_bonus": card.fury_bonus,
+		"revives_remaining": card.revives_remaining,
+		"attacks_left": card.attacks_left,
+		"current_form_id": card.current_form_id,
+		"chosen_ability_id": card.chosen_ability_id,
+		"ability_used": card.ability_used,
+		"silenced": card.silenced,
+	}
+
+
+func _card_state_matches(card: CardInstance, state: Dictionary) -> bool:
+	return (
+		card.damage == int(state.get("damage", -1))
+		and card.health == int(state.get("health", -1))
+		and card.max_health == int(state.get("max_health", -1))
+		and card.fury_bonus == int(state.get("fury_bonus", -1))
+		and card.revives_remaining == int(state.get("revives_remaining", -1))
+		and card.attacks_left == int(state.get("attacks_left", -1))
+		and card.current_form_id == str(state.get("current_form_id", ""))
+		and card.chosen_ability_id == str(state.get("chosen_ability_id", ""))
+		and card.ability_used == bool(state.get("ability_used", false))
+		and card.silenced == bool(state.get("silenced", false))
+	)
+
+
+func _restore_card_state(card: CardInstance, state: Dictionary) -> void:
+	card.damage = int(state["damage"])
+	card.health = int(state["health"])
+	card.max_health = int(state["max_health"])
+	card.fury_bonus = int(state["fury_bonus"])
+	card.revives_remaining = int(state["revives_remaining"])
+	card.attacks_left = int(state["attacks_left"])
+	card.current_form_id = str(state["current_form_id"])
+	card.chosen_ability_id = str(state["chosen_ability_id"])
+	card.ability_used = bool(state["ability_used"])
+	card.silenced = bool(state["silenced"])
 
 
 func _confirm_attack() -> void:
@@ -726,6 +827,33 @@ func _choose_ai_blockers(
 	var assignments: Dictionary = {}
 	var used: Array[CardInstance] = []
 	for attacker in attackers:
+		if (
+			attacker.definition.card_id != "human_warrior"
+			and attacker.definition.card_id != "human_ranger"
+		):
+			continue
+		for defender in defenders:
+			if used.has(defender):
+				continue
+			var lethal_execution := (
+				_warrior_attack_will_kill(attacker, defender)
+				or _ranger_attack_will_kill(attacker, defender)
+			)
+			if lethal_execution:
+				assignments[attacker] = defender
+				used.append(defender)
+				_log(
+					"The opponent blocks your Human %s with %s."
+					% [
+						"Warrior" if attacker.definition.card_id == "human_warrior" else "Ranger",
+						defender.current_definition().card_name,
+					]
+				)
+				break
+
+	for attacker in attackers:
+		if assignments.has(attacker):
+			continue
 		var best_defender: CardInstance = null
 		var best_score := 0
 		for defender in defenders:
@@ -760,6 +888,10 @@ func _resolve_attack_group(
 		if game_over:
 			break
 		var defender: CardInstance = blockers.get(attacker) as CardInstance
+		if _warrior_attack_will_kill(attacker, defender):
+			await _play_warrior_execution(defender)
+		elif attacker_is_player and _ranger_attack_will_kill(attacker, defender):
+			await _play_ranger_execution(defender)
 		await _resolve_combat(attacker, defender, attacker_is_player)
 	combat_attackers.clear()
 	combat_blockers.clear()
@@ -767,6 +899,57 @@ func _resolve_attack_group(
 	selected_combat_attacker = null
 	selected_combat_blocker = null
 	_layout()
+
+
+func _warrior_attack_will_kill(attacker: CardInstance, defender: CardInstance) -> bool:
+	if (
+		attacker == null
+		or defender == null
+		or attacker.definition.card_id != "human_warrior"
+	):
+		return false
+	return _attack_will_kill(attacker, defender)
+
+
+func _ranger_attack_will_kill(attacker: CardInstance, defender: CardInstance) -> bool:
+	if (
+		attacker == null
+		or defender == null
+		or attacker.definition.card_id != "human_ranger"
+	):
+		return false
+	return _attack_will_kill(attacker, defender)
+
+
+func _attack_will_kill(attacker: CardInstance, defender: CardInstance) -> bool:
+	if (
+		attacker.health <= 0
+		or attacker.attacks_left <= 0
+		or defender.health <= 0
+	):
+		return false
+	var damage := attacker.current_damage()
+	if defender.has_active_keyword("tough"):
+		damage = maxi(damage - 1, 0)
+	if damage < defender.health:
+		return false
+	return defender.revives_remaining <= 0 or defender.silenced
+
+
+func _play_warrior_execution(defender: CardInstance) -> void:
+	var cinematic := WarriorExecutionCinematic.new()
+	cinematic.configure(defender.current_definition().card_name)
+	board_root.get_parent().add_child(cinematic)
+	await cinematic.play(board_root)
+	cinematic.queue_free()
+
+
+func _play_ranger_execution(defender: CardInstance) -> void:
+	var cinematic := RANGER_EXECUTION_CINEMATIC.new()
+	cinematic.configure(defender.current_definition().card_name)
+	board_root.get_parent().add_child(cinematic)
+	await cinematic.play(board_root)
+	cinematic.queue_free()
 
 
 func _bench_position(unit: CardInstance, player_owned: bool) -> Vector2:
@@ -784,7 +967,7 @@ func _bench_position(unit: CardInstance, player_owned: bool) -> Vector2:
 	return Vector2(start_x + step * float(index), row_y)
 
 
-func _place_attacking_view(unit: CardInstance, player_owned: bool, index: int) -> void:
+func _place_attacking_view(unit: CardInstance, index: int) -> void:
 	var view := _view_for(unit)
 	if view == null:
 		return
@@ -793,10 +976,7 @@ func _place_attacking_view(unit: CardInstance, player_owned: bool, index: int) -
 	var total := CardView.CARD_SIZE.x + spacing * float(count - 1)
 	var start_x := (_width() - total) * 0.5
 	var x := start_x + spacing * float(index)
-	if player_owned:
-		view.move_to(Vector2(x, board_table.combat_center_y() - CardView.CARD_SIZE.y * 0.5))
-	else:
-		view.move_to(Vector2(x, board_table.combat_center_y() - CardView.CARD_SIZE.y - 12.0))
+	view.move_to(Vector2(x, board_table.combat_center_y() - CardView.CARD_SIZE.y * 0.5))
 
 
 func _place_blocking_view(unit: CardInstance, attacker_index: int) -> void:
@@ -822,6 +1002,7 @@ func _on_end_turn() -> void:
 	if busy or awaiting_choice or game_over or not player_turn:
 		return
 	busy = true
+	_recall_states.clear()
 	player_turn = false
 	mode = ""
 	selected = null
@@ -858,7 +1039,7 @@ func _enemy_turn() -> void:
 	selected_combat_attacker = null
 	selected_combat_blocker = null
 	for index in attackers.size():
-		_place_attacking_view(attackers[index], false, index)
+		_place_attacking_view(attackers[index], index)
 	mode = "block"
 	_log("The enemy is attacking with %d unit(s). Resolve your blockers." % attackers.size())
 	_refresh_all()
@@ -1089,6 +1270,7 @@ func _start_round() -> void:
 		_ready_unit(unit)
 	for unit in enemy_board:
 		_ready_unit(unit)
+	_recall_states.clear()
 	player_turn = true
 	mode = ""
 	selected = null
@@ -1238,6 +1420,8 @@ func _remove_dead(player_side: bool) -> void:
 	while index >= 0:
 		var unit := board[index]
 		if unit.health <= 0:
+			if player_side:
+				_recall_states.erase(unit)
 			if unit.definition.card_id == "elf_mount":
 				riders += 1
 			deaths_this_round += 1

@@ -4,7 +4,7 @@ extends Panel
 signal pressed(view: CardView)
 signal drag_dropped(view: CardView, drop_position: Vector2)
 
-const CARD_SIZE := Vector2(124, 176)
+const CARD_SIZE := Vector2(168, 240)
 
 var instance: CardInstance
 var owner_player: bool = true
@@ -12,6 +12,15 @@ var zone: String = "hand"
 var selected: bool = false
 
 var _stripe: ColorRect
+var _artwork: Panel
+var _art_label: Label
+var _ranger_art: Control
+var _human_art: Control
+var _faction_art: Control
+var _skill_icon: Label
+var _arrow_icon: Control
+var _human_skill_icon: Control
+var _faction_skill_icon: Control
 var _name_label: Label
 var _cost_label: Label
 var _rules_label: Label
@@ -52,9 +61,44 @@ func refresh() -> void:
 	_name_label.text = shown.card_name
 	_cost_label.text = str(instance.definition.gold_cost)
 	_rules_label.text = shown.rules_text
+	tooltip_text = shown.rules_text
 	_power_label.text = str(instance.current_damage())
 	_health_label.text = str(instance.health)
 	_stripe.color = _faction_color(shown.faction)
+	_art_label.text = shown.card_name.substr(0, 1).to_upper()
+	_art_label.add_theme_color_override("font_color", _faction_color(shown.faction).lightened(0.55))
+	var is_ranger := shown.card_id == "human_ranger"
+	var is_human_portrait := (
+		shown.faction == CardResource.Faction.HUMAN
+		and shown.card_id != "human_ranger"
+	)
+	var is_faction_portrait := shown.faction != CardResource.Faction.HUMAN
+	_art_label.visible = not is_ranger and not is_human_portrait and not is_faction_portrait
+	_ranger_art.visible = is_ranger
+	_human_art.visible = is_human_portrait
+	_faction_art.visible = is_faction_portrait
+	_arrow_icon.visible = is_ranger
+	_human_skill_icon.visible = is_human_portrait
+	_faction_skill_icon.visible = is_faction_portrait
+	_skill_icon.visible = not is_ranger and not is_human_portrait and not is_faction_portrait
+	if is_ranger:
+		_ranger_art.queue_redraw()
+		_arrow_icon.queue_redraw()
+	if is_human_portrait:
+		_human_art.set("card_id", shown.card_id)
+		_human_art.queue_redraw()
+		_human_skill_icon.set("card_id", shown.card_id)
+		_human_skill_icon.queue_redraw()
+	if is_faction_portrait:
+		_faction_art.set("card_id", shown.card_id)
+		_faction_art.queue_redraw()
+		_faction_skill_icon.set("card_id", shown.card_id)
+		_faction_skill_icon.queue_redraw()
+	_artwork.add_theme_stylebox_override("panel", _make_box_style(
+		_faction_color(shown.faction).darkened(0.72),
+		_faction_color(shown.faction).lightened(0.15)
+	))
+	_skill_icon.add_theme_color_override("font_color", _faction_color(shown.faction).lightened(0.5))
 	_apply_style()
 	var used_attack := zone == "board" and instance.attacks_left <= 0
 	modulate = Color(0.62, 0.62, 0.62) if used_attack and not selected else Color.WHITE
@@ -121,30 +165,153 @@ func _input(event: InputEvent) -> void:
 func _build() -> void:
 	_stripe = ColorRect.new()
 	_stripe.position = Vector2(0, 0)
-	_stripe.size = Vector2(CARD_SIZE.x, 8)
+	_stripe.size = Vector2(CARD_SIZE.x, 4)
 	_stripe.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(_stripe)
 
+	_name_label = _make_label(Vector2(10, 7), Vector2(108, 24), 15, HORIZONTAL_ALIGNMENT_LEFT)
+	_name_label.clip_text = true
+
 	var cost_badge := ColorRect.new()
-	cost_badge.position = Vector2(8, 16)
-	cost_badge.size = Vector2(24, 24)
+	cost_badge.position = Vector2(134, 7)
+	cost_badge.size = Vector2(26, 24)
 	cost_badge.color = Color("e0b84a")
 	cost_badge.mouse_filter = Control.MOUSE_FILTER_IGNORE
 	add_child(cost_badge)
 
-	_cost_label = _make_label(Vector2(8, 16), Vector2(24, 24), 16, HORIZONTAL_ALIGNMENT_CENTER)
-	_name_label = _make_label(Vector2(36, 14), Vector2(82, 40), 13, HORIZONTAL_ALIGNMENT_LEFT)
-	_name_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_rules_label = _make_label(Vector2(8, 58), Vector2(108, 78), 11, HORIZONTAL_ALIGNMENT_LEFT)
+	_cost_label = _make_label(Vector2(134, 7), Vector2(26, 24), 15, HORIZONTAL_ALIGNMENT_CENTER)
+
+	_artwork = Panel.new()
+	_artwork.position = Vector2(8, 38)
+	_artwork.size = Vector2(152, 82)
+	_artwork.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	_artwork.add_theme_stylebox_override("panel", _make_box_style(Color("202a31"), Color("a88b4e")))
+	add_child(_artwork)
+	_art_label = _make_label(
+		Vector2(0, 0),
+		_artwork.size,
+		48,
+		HORIZONTAL_ALIGNMENT_CENTER,
+		_artwork
+	)
+	_art_label.add_theme_color_override("font_color", Color("d8c99e"))
+
+	_ranger_art = Control.new()
+	_ranger_art.set_script(load("res://procedural_ranger_art.gd"))
+	_ranger_art.position = Vector2.ZERO
+	_ranger_art.size = _artwork.size
+	_ranger_art.visible = false
+	_artwork.add_child(_ranger_art)
+
+	_human_art = Control.new()
+	_human_art.set_script(load("res://procedural_human_art.gd"))
+	_human_art.position = Vector2.ZERO
+	_human_art.size = _artwork.size
+	_human_art.visible = false
+	_artwork.add_child(_human_art)
+
+	_faction_art = Control.new()
+	_faction_art.set_script(load("res://procedural_faction_art.gd"))
+	_faction_art.position = Vector2.ZERO
+	_faction_art.size = _artwork.size
+	_faction_art.visible = false
+	_artwork.add_child(_faction_art)
+
+	var skill_frame := Panel.new()
+	skill_frame.position = Vector2(9, 132)
+	skill_frame.size = Vector2(34, 40)
+	skill_frame.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	skill_frame.add_theme_stylebox_override("panel", _make_box_style(Color("20252d"), Color("6b7479")))
+	add_child(skill_frame)
+	_skill_icon = _make_label(
+		Vector2(0, 0),
+		skill_frame.size,
+		18,
+		HORIZONTAL_ALIGNMENT_CENTER,
+		skill_frame
+	)
+	_skill_icon.text = "*"
+
+	_arrow_icon = Control.new()
+	_arrow_icon.set_script(load("res://procedural_arrow_icon.gd"))
+	_arrow_icon.position = Vector2(0, 0)
+	_arrow_icon.size = skill_frame.size
+	_arrow_icon.visible = false
+	skill_frame.add_child(_arrow_icon)
+
+	_human_skill_icon = Control.new()
+	_human_skill_icon.set_script(load("res://procedural_human_skill_icon.gd"))
+	_human_skill_icon.position = Vector2.ZERO
+	_human_skill_icon.size = skill_frame.size
+	_human_skill_icon.visible = false
+	skill_frame.add_child(_human_skill_icon)
+
+	_faction_skill_icon = Control.new()
+	_faction_skill_icon.set_script(load("res://procedural_faction_skill_icon.gd"))
+	_faction_skill_icon.position = Vector2.ZERO
+	_faction_skill_icon.size = skill_frame.size
+	_faction_skill_icon.visible = false
+	skill_frame.add_child(_faction_skill_icon)
+
+	_rules_label = _make_label(Vector2(51, 126), Vector2(108, 72), 12, HORIZONTAL_ALIGNMENT_LEFT)
 	_rules_label.autowrap_mode = TextServer.AUTOWRAP_WORD_SMART
-	_rules_label.clip_text = true
-	_power_label = _make_label(Vector2(8, 142), Vector2(48, 28), 20, HORIZONTAL_ALIGNMENT_LEFT)
+	_rules_label.clip_text = false
+	_rules_label.vertical_alignment = VERTICAL_ALIGNMENT_TOP
+
+	var damage_box := Panel.new()
+	damage_box.position = Vector2(96, 202)
+	damage_box.size = Vector2(30, 34)
+	damage_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	damage_box.add_theme_stylebox_override("panel", _make_box_style(Color("24272b"), Color("b97645")))
+	add_child(damage_box)
+	var damage_caption := _make_label(
+		Vector2(0, 2),
+		Vector2(30, 11),
+		9,
+		HORIZONTAL_ALIGNMENT_CENTER,
+		damage_box
+	)
+	damage_caption.text = "ATK"
+	_power_label = _make_label(
+		Vector2(0, 14),
+		Vector2(30, 18),
+		16,
+		HORIZONTAL_ALIGNMENT_CENTER,
+		damage_box
+	)
 	_power_label.add_theme_color_override("font_color", Color("f0a35e"))
-	_health_label = _make_label(Vector2(68, 142), Vector2(48, 28), 20, HORIZONTAL_ALIGNMENT_RIGHT)
+
+	var health_box := Panel.new()
+	health_box.position = Vector2(130, 202)
+	health_box.size = Vector2(30, 34)
+	health_box.mouse_filter = Control.MOUSE_FILTER_IGNORE
+	health_box.add_theme_stylebox_override("panel", _make_box_style(Color("24272b"), Color("bb6666")))
+	add_child(health_box)
+	var health_caption := _make_label(
+		Vector2(0, 2),
+		Vector2(30, 11),
+		9,
+		HORIZONTAL_ALIGNMENT_CENTER,
+		health_box
+	)
+	health_caption.text = "HP"
+	_health_label = _make_label(
+		Vector2(0, 14),
+		Vector2(30, 18),
+		16,
+		HORIZONTAL_ALIGNMENT_CENTER,
+		health_box
+	)
 	_health_label.add_theme_color_override("font_color", Color("ef6d6d"))
 
 
-func _make_label(label_position: Vector2, label_size: Vector2, font_size: int, alignment: HorizontalAlignment) -> Label:
+func _make_label(
+	label_position: Vector2,
+	label_size: Vector2,
+	font_size: int,
+	alignment: HorizontalAlignment,
+	label_parent: Control = null
+) -> Label:
 	var label := Label.new()
 	label.position = label_position
 	label.size = label_size
@@ -153,8 +320,20 @@ func _make_label(label_position: Vector2, label_size: Vector2, font_size: int, a
 	label.add_theme_font_size_override("font_size", font_size)
 	label.add_theme_color_override("font_color", Color("f3efe4"))
 	label.mouse_filter = Control.MOUSE_FILTER_IGNORE
-	add_child(label)
+	if label_parent == null:
+		add_child(label)
+	else:
+		label_parent.add_child(label)
 	return label
+
+
+func _make_box_style(background: Color, border: Color) -> StyleBoxFlat:
+	var style := StyleBoxFlat.new()
+	style.bg_color = background
+	style.border_color = border
+	style.set_border_width_all(1)
+	style.set_corner_radius_all(2)
+	return style
 
 
 func _apply_style() -> void:
@@ -162,7 +341,7 @@ func _apply_style() -> void:
 	style.bg_color = Color("171a22")
 	style.border_color = Color("f0d48a") if selected else _stripe.color
 	style.set_border_width_all(3 if selected else 1)
-	style.set_corner_radius_all(6)
+	style.set_corner_radius_all(4)
 	add_theme_stylebox_override("panel", style)
 
 

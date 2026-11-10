@@ -4,7 +4,7 @@
 	"name": "Warrior",
 	"faction": "human",
 	"type": "unit",
-	"damage": 1,
+	"damage": 101,
 	"health": 5,
 	"gold_cost": 2,
 	"keywords": ["tough"],
