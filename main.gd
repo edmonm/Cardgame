@@ -848,7 +848,7 @@ func _enemy_turn() -> void:
 	if player_has_attack_token:
 		_log("The enemy does not have the Attack Token.")
 		return
-	var attackers := _eligible_attackers(enemy_board)
+	var attackers := _pick_enemy_attackers()
 	if attackers.is_empty():
 		_log("The enemy has no ready attackers.")
 		return
@@ -860,7 +860,7 @@ func _enemy_turn() -> void:
 	for index in attackers.size():
 		_place_attacking_view(attackers[index], false, index)
 	mode = "block"
-	_log("Drag a blocker onto an attacker, or click your blocker and then an attacker.")
+	_log("The enemy is attacking with %d unit(s). Resolve your blockers." % attackers.size())
 	_refresh_all()
 	await blocks_confirmed
 	mode = ""
@@ -874,12 +874,75 @@ func _enemy_turn() -> void:
 
 func _best_enemy_play() -> CardInstance:
 	var best: CardInstance = null
+	var best_score: float = -INF
 	for card in enemy_hand:
 		if card.definition.gold_cost > enemy_gold:
 			continue
-		if best == null or card.definition.gold_cost > best.definition.gold_cost:
+		var score := _score_enemy_card(card)
+		if best == null or score > best_score:
 			best = card
+			best_score = score
 	return best
+
+
+func _score_enemy_card(card: CardInstance) -> float:
+	var definition := card.current_definition()
+	var score := float(card.definition.gold_cost) * 1.6
+	score += float(card.current_damage()) * 2.4
+	score += float(card.health) * 1.5
+	if definition.has_keyword("swift_attack") or definition.has_keyword("high_attack_speed"):
+		score += 4.0
+	if definition.has_keyword("tough"):
+		score += 2.5
+	if definition.has_keyword("fury"):
+		score += 2.5
+	if definition.has_keyword("acidic_blood"):
+		score += 2.0
+	if definition.card_id == "undead_mage":
+		score += 6.0
+	if definition.card_id == "elf_mount":
+		score += 3.5
+	if definition.card_id == "orc_shaman":
+		score += 3.0
+	if definition.card_id == "elf_ranger":
+		score += 2.5
+	if enemy_board.size() >= MAX_BOARD - 1:
+		score -= 2.0
+	return score
+
+
+func _pick_enemy_attackers() -> Array[CardInstance]:
+	var ready := _eligible_attackers(enemy_board)
+	if ready.is_empty():
+		return []
+	ready.sort_custom(func(a: CardInstance, b: CardInstance) -> bool:
+		return _enemy_attack_priority(a) > _enemy_attack_priority(b)
+	)
+	var choose_count := 1
+	if ready.size() >= 3:
+		choose_count = 3
+	elif ready.size() >= 2:
+		choose_count = 2
+	var chosen: Array[CardInstance] = []
+	for index in ready.size():
+		if chosen.size() >= choose_count:
+			break
+		chosen.append(ready[index])
+	return chosen
+
+
+func _enemy_attack_priority(unit: CardInstance) -> float:
+	var priority := float(unit.current_damage()) * 3.0
+	priority += float(unit.health) * 1.5
+	if unit.has_active_keyword("swift_attack") or unit.has_active_keyword("high_attack_speed"):
+		priority += 3.0
+	if unit.has_active_keyword("tough"):
+		priority += 2.0
+	if unit.has_active_keyword("fury"):
+		priority += 2.5
+	if unit.chosen_ability_id == "ally_attack_heal":
+		priority += 1.5
+	return priority
 
 
 func _enemy_play(card: CardInstance) -> void:
